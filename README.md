@@ -29,6 +29,7 @@ Current limitations:
 * I assume that water flow through heatpump is 20 litres per second
 * pump in your heating system must have constant performance
 * project assumes that heatpump is generating power only if electric power is greater than 100Watts
+* assumes water density at 994
 
 # How to change constants:
 in lines: 113,128 there is an equation beginning with 0.02, that means 20 litres/sec
