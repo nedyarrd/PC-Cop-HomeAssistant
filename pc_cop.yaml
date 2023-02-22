@@ -1,0 +1,417 @@
+esphome:
+  name: cop
+  
+
+globals:
+  - id: screen_timeout
+    type: int
+    restore_value: no
+    initial_value: '60'
+  - id: fade_time
+    type: int
+    restore_value: no
+    initial_value: '10'
+
+
+output:
+  - platform: ledc
+    pin: 25
+    id: backlight_pwm
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "ILI9341 Display Backlight"
+    id: back_light
+    restore_mode: ALWAYS_OFF
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "********************************************"
+
+ota:
+  password: "********************************"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Cop Fallback Hotspot"
+    password: "************"
+
+captive_portal:
+
+uart:
+  rx_pin: 16
+  tx_pin: 17
+  baud_rate: 9600
+
+
+modbus:
+
+spi:
+  clk_pin: 18
+  mosi_pin: 23
+
+dallas:
+  pin: 22
+  update_interval: 60s
+
+sensor:
+  - platform: pzemac
+    id: pzemac_1
+    current:
+      name: "PZEM-004T V3 Current"
+      id: pc_current
+    voltage:
+      name: "PZEM-004T V3 Voltage"
+    energy:
+      name: "PZEM-004T V3 Energy (Total)"
+      id: el_energy_total
+      state_class: total_increasing
+      device_class: energy
+      filters:
+        offset: 0.0
+    power:
+      name: "PZEM-004T V3 Power"
+      id: el_power
+    frequency:
+      name: "PZEM-004T V3 Frequency"
+    power_factor:
+      name: "PZEM-004T V3 Power Factor"
+    update_interval: 60s
+  - platform: dallas
+    address: 0x510b228144cf6928
+    name: T1
+    id: pc_T1
+  - platform: dallas
+    address: 0xcc0b22811f6bc128
+    name: T2
+    id: pc_T2
+# PC power sensors
+# heating
+  - platform: template
+    name: "PC Power (Heating)"
+    id: pc_power_heating
+    device_class: "power"
+    unit_of_measurement: "W"
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      if ((id(el_power).state > 100) && (id(pc_T1).state > id(pc_T2).state)) {
+          return 0.02*4.2*997*(id(pc_T1).state-id(pc_T2).state)*0.01666666*1000;
+          }
+          else
+          { return 0.0;
+          }
+# cooling  
+  - platform: template
+    name: "PC Power (Cooling)"
+    id: pc_power_cooling
+    device_class: "power"
+    unit_of_measurement: "W"
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      if ((id(el_power).state > 100) && (id(pc_T2).state > id(pc_T1).state)) {
+          return 0.02*4.2*997*(id(pc_T2).state-id(pc_T1).state)*0.01666666*1000;
+          }
+          else
+          { return 0.0;
+          }  
+# total
+  - platform: template
+    name: "PC Power (Total)"
+    id: pc_power_total
+    device_class: "power"
+    unit_of_measurement: "W"
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      return id(pc_power_heating).state+id(pc_power_cooling).state;
+
+# Electric power sensors
+# heating
+  - platform: template
+    name: "Electric Power (Heating)"
+    id: el_power_heating
+    device_class: "power"
+    unit_of_measurement: "W"
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      if (id(pc_T2).state < id(pc_T1).state) {
+          return id(el_power).state;
+          }
+          else
+          { return 0.0;
+          }
+# cooling
+  - platform: template
+    name: "Electric Power (Cooling)"
+    id: el_power_cooling
+    device_class: "power"
+    unit_of_measurement: "W"
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      if (id(pc_T2).state > id(pc_T1).state) {
+          return id(el_power).state;
+          }
+          else
+          { return 0.0;
+          }
+# total is el_power
+
+# PC energy counters
+# heating
+  - platform: integration
+    sensor: pc_power_heating
+    time_unit: h
+    name: "PC Energy (heating)"
+    id: pc_energy_heating
+    state_class: total
+    device_class: energy
+    restore: true
+    filters: 
+      - offset: 0.0
+# cooling
+  - platform: integration
+    sensor: pc_power_cooling
+    time_unit: h
+    name: "PC Energy (cooling)"
+    id: pc_energy_cooling
+    state_class: total
+    device_class: energy
+    restore: true
+# total
+  - platform: integration
+    sensor: pc_power_total
+    time_unit: h
+    name: "PC Energy (total)"
+    id: pc_energy_total
+    state_class: total
+    device_class: energy
+    restore: true
+    filters: 
+      - offset: 0.0
+
+# EL energy counters
+# heating
+  - platform: integration
+    sensor: el_power_heating
+    time_unit: h
+    name: "Electric Energy Heating"
+    id: el_energy_heating
+    state_class: total
+    device_class: energy
+    restore: true
+    filters:
+      - offset: 0.0
+# cooling
+  - platform: integration
+    sensor: el_power_cooling
+    time_unit: h
+    name: "Electric Energy Cooling"
+    id: el_energy_cooling
+    state_class: total
+    device_class: energy
+    restore: true
+    filters:
+      - offset: 0.0
+    
+
+# daily PC energy
+  - platform: total_daily_energy
+    name: "Total Daily PC Energy"
+    power_id: pc_power_total
+    id: pc_energy_daily
+# daily EN Energy
+  - platform: total_daily_energy
+    name: "Total Daily Electric Energy"
+    power_id: el_power
+    id: el_energy_daily
+
+
+# COP'S
+# daily
+  - platform: template
+    name: "_COP Daily"
+    id: pc_cop_daily
+    update_interval: 60s
+    lambda: |-
+      if (id(el_energy_daily).state != 0.0)
+        return id(pc_energy_daily).state/id(el_energy_daily).state;
+        else
+        return 0.0;
+  - platform: template
+    name: "_COP (heating)"
+    id: pc_cop_heating
+    update_interval: 60s
+    lambda: |-
+      if (id(el_energy_heating).state != 0.0)
+        return id(pc_energy_heating).state/id(el_energy_heating).state;
+        else
+        return 0.0;
+
+  - platform: template
+    name: "_COP (cooling)"
+    id: pc_cop_cooling
+    update_interval: 60s
+    lambda: |-
+      if (id(el_energy_heating).state != 0.0)
+        return id(pc_energy_cooling).state/id(el_energy_cooling).state;
+        else
+        return 0.0;
+  
+  - platform: wifi_signal # Reports the WiFi signal strength/RSSI in dB
+    name: "WiFi Signal dB"
+    id: wifi_signal_db
+    update_interval: 60s
+    entity_category: "diagnostic"
+
+  - platform: copy # Reports the WiFi signal strength in %
+    source_id: wifi_signal_db
+    name: "WiFi Signal Percent"
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "Signal %"
+    entity_category: "diagnostic"
+
+font:
+  - file: "arial.ttf"
+    id: arial
+    size: 20
+  - file: "gfonts://Roboto"
+    id: roboto20
+    size: 20
+  - file: "gfonts://Roboto"
+    id: roboto30
+    size: 30
+  - file: "gfonts://Roboto"
+    id: roboto40
+    size: 40
+
+display:
+  - platform: ili9341
+    model: TFT 2.4
+    cs_pin: 5
+    dc_pin: 27
+#    led_pin: 25  ### see note below ###
+    reset_pin: 26
+    update_interval: 5s
+    rotation: 270
+    id: ili
+    pages:
+      - id: page_1
+        lambda: |-
+          it.printf(0, 0, id(roboto20), "El power: %.1fW", id(el_power).state);
+          it.printf(0, 21, id(roboto20), "PC power: %.1fW", id(pc_power_total).state);
+          it.graph(0,45,id(pc_power_graph),my_green);
+      - id: page_2
+        lambda: |-
+          it.printf(0, 0, id(roboto40), "COP heat: %.2f", id(pc_cop_heating).state);
+          it.printf(0, 41, id(roboto40), "COP Cooling: %.2f", id(pc_cop_cooling).state);
+          it.printf(0, 82, id(roboto40), "COP Daily: %.2f",id(pc_cop_daily).state);
+      - id: page_3
+        lambda: |-
+          it.printf(0, 0, id(roboto30), "T1: %.2f , T2: %.2f ", id(pc_T1).state, id(pc_T2).state);
+          it.graph(0,45,id(pc_temp_graph),my_green);
+
+
+
+graph:
+  - id: pc_power_graph
+    width: 300
+    height: 177
+    duration: 1h
+    traces:
+      - sensor: pc_power_total
+        line_thickness: 1
+        line_type: SOLID
+        color: my_lt_green
+      - sensor: el_power
+        line_thickness: 1
+        line_type: SOLID
+        color: my_lt_blue
+  - id: pc_temp_graph
+    width: 300
+    height: 177
+    duration: 1h
+    traces:
+      - sensor: pc_T1
+        line_thickness: 1
+        line_type: SOLID
+        color: my_lt_green
+      - sensor: pc_T2
+        line_thickness: 1
+        line_type: SOLID
+        color: my_lt_blue
+
+color:
+  - id: my_lt_green
+    red: 33%
+    green: 100%
+    blue: 33%
+  - id: my_lt_blue
+    red: 33%
+    green: 33%
+    blue: 100%
+  - id: my_green
+    red: 0%
+    green: 100%
+    blue: 0%
+
+touchscreen:
+  platform: xpt2046
+  id: tcreen
+  cs_pin: 15
+  update_interval: 50ms
+  report_interval: 1s
+  threshold: 400
+  calibration_x_min: 3860
+  calibration_x_max: 280
+  calibration_y_min: 340
+  calibration_y_max: 3860
+  swap_x_y: false
+  on_touch:
+    - lambda: |-
+        ESP_LOGI("cal", "x=%d, y=%d, x_raw=%d, y_raw=%0d",
+              id(tcreen).x,
+              id(tcreen).y,
+              id(tcreen).x_raw,
+              id(tcreen).y_raw
+              );
+        ESP_LOGI("ts", "Turning on");
+        auto call = id(back_light).turn_on();
+        call.set_brightness(0.77);
+        call.perform();
+        ESP_LOGI("ts", "Waiting 60s");
+    - delay: 60s
+    - lambda: |-
+        ESP_LOGI("ts", "Fading 10s");
+        auto call = id(back_light).turn_off();
+        call.set_transition_length(60*1000);
+        call.perform();
+
+interval:
+  - interval: 5s
+    then:
+      - display.page.show_next: ili
+      - component.update: ili
+
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
